@@ -4436,9 +4436,9 @@ export const addFiveDollarToNoBusStudents = async (
 
 import {
 
-  toNumber,
+
   feeOrFallback, // still useful elsewhere, but we'll be explicit below
-  joinPhones,
+ 
   sumNumbers,
 } from "../prisma/utlis/prisma-utils";
 
@@ -4460,6 +4460,170 @@ import {
  *   }]
  * }
  */
+// export const getUnpaidFamiliesGroupedByParent = async (
+//   req: Request,
+//   res: Response
+// ) => {
+//   try {
+//     const students = await prisma.student.findMany({
+//       where: {
+//         isdeleted: false,
+//         parentUserId: { not: null },
+//         StudentFee: { some: { isPaid: false } },
+//       },
+//       select: {
+//         id: true,
+//         fullname: true,
+//         fee: true,
+//         phone: true,
+//         phone2: true,
+//         familyName: true,
+//         parentUserId: true,
+
+//         classes: { select: { name: true } },
+
+//         parentUser: { select: { id: true, fullName: true, phoneNumber: true } },
+
+//         // Unpaid monthly rows
+//         StudentFee: {
+//           where: { isPaid: false },
+//           select: { month: true, year: true, student_fee: true },
+//         },
+
+//         // Discount rows (may include multiple entries per month)
+//         DiscountLog: {
+//           select: { month: true, year: true, amount: true },
+//         },
+//       },
+//     });
+
+//     type Family = {
+//       familyName: string;
+//       phones: string[];
+//       totalBalance: number;
+//       students: {
+//         id: number;
+//         fullname: string;
+//         className: string;
+//         balance: number;
+//         unpaidFees: { month: number; year: number; student_fee: string }[];
+//       }[];
+//     };
+
+//     const families = new Map<number, Family>();
+
+//     for (const s of students) {
+//       // Sum all discounts per (month,year) for this student
+//       const discountMap = new Map<string, number>();
+//       for (const d of s.DiscountLog) {
+//         const key = `${d.month}-${d.year}`;
+//         discountMap.set(key, (discountMap.get(key) || 0) + toNumber(d.amount));
+//       }
+
+//       // Build unpaid fee rows in the exact shape your frontend expects
+//       const unpaidFees = s.StudentFee
+//         .map((f) => {
+//           const key = `${f.month}-${f.year}`;
+
+//           const monthlyHasExplicitFee = f.student_fee !== null && f.student_fee !== undefined;
+
+//           // If the monthly fee is explicitly set, treat it as the final monthly fee (already adjusted),
+//           // so DO NOT subtract DiscountLog again (prevents double-discount).
+//           const baseFee = monthlyHasExplicitFee ? toNumber(f.student_fee) : toNumber(s.fee);
+
+//           // Only apply discount when monthly fee is NOT explicitly set.
+//           const discountToApply = monthlyHasExplicitFee ? 0 : toNumber(discountMap.get(key));
+//           const discountApplied = Math.min(baseFee, discountToApply);
+
+//           const netDue = Math.max(0, baseFee - discountApplied);
+
+//           return {
+//             month: f.month,
+//             year: f.year,
+//             student_fee: netDue.toString(), // frontend expects string
+//           };
+//         })
+//         // Hide fully covered months
+//         .filter((row) => row.student_fee !== "0");
+
+//       const balance = sumNumbers(unpaidFees.map((r) => r.student_fee));
+//       if (balance <= 0) continue;
+
+//       const studentData = {
+//         id: s.id,
+//         fullname: s.fullname,
+//         className: s.classes?.name ?? "",
+//         unpaidFees,
+//         balance,
+//       };
+
+//       const parentId = s.parentUserId!;
+//       if (families.has(parentId)) {
+//         const fam = families.get(parentId)!;
+//         fam.totalBalance += balance;
+//         fam.students.push(studentData);
+//       } else {
+//         const phones = joinPhones([s.parentUser?.phoneNumber, s.phone, s.phone2]);
+//         families.set(parentId, {
+//           familyName: s.familyName ?? s.parentUser?.fullName ?? "Unknown Family",
+//           phones: phones ? phones.split(", ") : [],
+//           totalBalance: balance,
+//           students: [studentData],
+//         });
+//       }
+//     }
+
+//     const result = Array.from(families.values())
+//       .filter((f) => f.totalBalance > 0)
+//       .sort((a, b) => b.totalBalance - a.totalBalance);
+
+//     return res.json({ families: result });
+//   } catch (e) {
+//     console.error("Error fetching unpaid families:", e);
+//     return res.status(500).json({ message: "Internal server error" });
+//   }
+// };
+
+
+
+
+// controllers/paymentController.ts
+
+
+/** ---------- helpers ---------- */
+const toNumber = (v: unknown): number => {
+  if (v === null || v === undefined) return 0;
+  const n = Number(v);
+  return Number.isFinite(n) ? n : 0;
+};
+const sum = (vals: number[]) => vals.reduce((s, v) => s + v, 0);
+const joinPhones = (vals: Array<string | null | undefined>) => {
+  const uniq = Array.from(
+    new Set(
+      vals
+        .map((v) => (v || "").trim())
+        .filter((v) => v.length > 0)
+    )
+  );
+  return uniq.join(", ");
+};
+/** ----------------------------- */
+
+type UnpaidFeeRow = { month: number; year: number; student_fee: string };
+
+type Family = {
+  familyName: string;
+  phones: string[];
+  totalBalance: number;
+  students: {
+    id: number;
+    fullname: string;
+    className: string;
+    balance: number;            // numeric for safe math
+    unpaidFees: UnpaidFeeRow[]; // student_fee remains string for FE contract
+  }[];
+};
+
 export const getUnpaidFamiliesGroupedByParent = async (
   req: Request,
   res: Response
@@ -4474,7 +4638,7 @@ export const getUnpaidFamiliesGroupedByParent = async (
       select: {
         id: true,
         fullname: true,
-        fee: true,
+        fee: true,            // ✅ use this as the ONLY base monthly fee
         phone: true,
         phone2: true,
         familyName: true,
@@ -4484,77 +4648,58 @@ export const getUnpaidFamiliesGroupedByParent = async (
 
         parentUser: { select: { id: true, fullName: true, phoneNumber: true } },
 
-        // Unpaid monthly rows
+        // Unpaid monthly rows + allocations (payments only)
         StudentFee: {
           where: { isPaid: false },
-          select: { month: true, year: true, student_fee: true },
+          select: {
+            month: true,
+            year: true,
+            // ⚠️ Intentionally NOT using student_fee here (we ignore it)
+            PaymentAllocation: {
+              select: { amount: true },
+            },
+          },
         },
 
-        // Discount rows (may include multiple entries per month)
-        DiscountLog: {
-          select: { month: true, year: true, amount: true },
-        },
+        // 🚫 No DiscountLog — discounts are ignored entirely
       },
     });
-
-    type Family = {
-      familyName: string;
-      phones: string[];
-      totalBalance: number;
-      students: {
-        id: number;
-        fullname: string;
-        className: string;
-        balance: number;
-        unpaidFees: { month: number; year: number; student_fee: string }[];
-      }[];
-    };
 
     const families = new Map<number, Family>();
 
     for (const s of students) {
-      // Sum all discounts per (month,year) for this student
-      const discountMap = new Map<string, number>();
-      for (const d of s.DiscountLog) {
-        const key = `${d.month}-${d.year}`;
-        discountMap.set(key, (discountMap.get(key) || 0) + toNumber(d.amount));
-      }
+      // Build per-month unpaid rows:
+      // netDue = student.fee (ONLY) - allocations (NO DISCOUNTS, NO student_fee)
+      const unpaidFeeRows = s.StudentFee.map((f) => {
+        const baseFee = toNumber(s.fee); // ✅ always student's default fee
 
-      // Build unpaid fee rows in the exact shape your frontend expects
-      const unpaidFees = s.StudentFee
-        .map((f) => {
-          const key = `${f.month}-${f.year}`;
+        const allocated = sum((f.PaymentAllocation || []).map((a) => toNumber(a.amount)));
 
-          const monthlyHasExplicitFee = f.student_fee !== null && f.student_fee !== undefined;
+        const netDue = Math.max(0, baseFee - allocated);
 
-          // If the monthly fee is explicitly set, treat it as the final monthly fee (already adjusted),
-          // so DO NOT subtract DiscountLog again (prevents double-discount).
-          const baseFee = monthlyHasExplicitFee ? toNumber(f.student_fee) : toNumber(s.fee);
-
-          // Only apply discount when monthly fee is NOT explicitly set.
-          const discountToApply = monthlyHasExplicitFee ? 0 : toNumber(discountMap.get(key));
-          const discountApplied = Math.min(baseFee, discountToApply);
-
-          const netDue = Math.max(0, baseFee - discountApplied);
-
-          return {
+        return {
+          row: {
             month: f.month,
             year: f.year,
-            student_fee: netDue.toString(), // frontend expects string
-          };
-        })
-        // Hide fully covered months
-        .filter((row) => row.student_fee !== "0");
+            // keep FE contract: string value
+            student_fee: String(netDue),
+          },
+          netDue,
+        };
+      });
 
-      const balance = sumNumbers(unpaidFees.map((r) => r.student_fee));
+      // exclude months fully covered
+      const filtered = unpaidFeeRows.filter((x) => x.netDue > 0);
+
+      const balance = sum(filtered.map((x) => x.netDue));
       if (balance <= 0) continue;
 
       const studentData = {
         id: s.id,
         fullname: s.fullname,
         className: s.classes?.name ?? "",
-        unpaidFees,
-        balance,
+        unpaidFees: filtered.map((x) => x.row),
+        balance, // number
       };
 
       const parentId = s.parentUserId!;
@@ -4583,11 +4728,6 @@ export const getUnpaidFamiliesGroupedByParent = async (
     return res.status(500).json({ message: "Internal server error" });
   }
 };
-
-
-
-
-// controllers/paymentController.ts
 
 
 
