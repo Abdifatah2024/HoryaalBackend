@@ -37,6 +37,8 @@ import {
   getUnpaidFamiliesGroupedByParent,
   applyTwoDollarRelief,
   checkPaymentHistoryByNumber,
+  getSep2025Fees19or29,
+  adjustSep2025Fees_29to27_19to17,
 
 } from "../controller/PaymentContorller";
 import { authenticate } from "../middlewares/authaniticator";
@@ -93,6 +95,9 @@ router.get("/unpaid-families", getUnpaidFamiliesGroupedByParent);
 router.post("/fees/relief", authenticate, applyTwoDollarRelief);
 // Usage: POST /api/fees/relief?month=8&year=2025
 router.post("/check-number-history", checkPaymentHistoryByNumber);
+router.get('/student-fees/sep-2025/19-29', getSep2025Fees19or29);
+
+router.post('/student-fees/sep-2025/adjust', adjustSep2025Fees_29to27_19to17);
 
 
 

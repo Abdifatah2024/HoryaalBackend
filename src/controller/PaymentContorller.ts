@@ -4944,4 +4944,136 @@ export const checkPaymentHistoryByNumber = async (req: Request, res: Response) =
 
 
 
+/**
+ * GET /student-fees/sep-2025/19-29
+ * Lists StudentFee rows in Sep-2025 whose student_fee is 19 or 29.
+ */
+export const getSep2025Fees19or29 = async (req: Request, res: Response) => {
+  try {
+    const month = 9;
+    const year = 2025;
+
+    const rows = await prisma.studentFee.findMany({
+      where: {
+        month,
+        year,
+        student_fee: {
+          in: [new Prisma.Decimal(19), new Prisma.Decimal(29)],
+        },
+      },
+      include: {
+        student: {
+          select: {
+            id: true,
+            fullname: true,
+            classId: true,
+            phone: true,
+            bus: true,
+          },
+        },
+        User: { select: { id: true, fullName: true } },
+      },
+      orderBy: [{ studentId: 'asc' }],
+    });
+
+    const fee19 = rows.filter(r => r.student_fee?.equals(new Prisma.Decimal(19)));
+    const fee29 = rows.filter(r => r.student_fee?.equals(new Prisma.Decimal(29)));
+
+    return res.status(200).json({
+      message: 'Student fees (Sep-2025) with amounts 19 or 29',
+      month,
+      year,
+      counts: { fee19: fee19.length, fee29: fee29.length, total: rows.length },
+      items: rows,
+    });
+  } catch (error: any) {
+    console.error('getSep2025Fees19or29 error:', error);
+    return res.status(500).json({ message: 'Server error', error: String(error?.message || error) });
+  }
+};
+
+/**
+ * POST /student-fees/sep-2025/adjust
+ * Body: { dryRun?: boolean }
+ * Adjusts 29 -> 27 and 19 -> 17 ONLY for Sep-2025.
+ * Returns a preview if dryRun=true, otherwise applies changes in a transaction.
+ */
+export const adjustSep2025Fees_29to27_19to17 = async (req: Request, res: Response) => {
+  const { dryRun } = req.body as { dryRun?: boolean };
+
+  try {
+    const month = 9;
+    const year = 2025;
+
+    // Fetch candidates
+    const candidates = await prisma.studentFee.findMany({
+      where: {
+        month,
+        year,
+        student_fee: {
+          in: [new Prisma.Decimal(19), new Prisma.Decimal(29)],
+        },
+      },
+      select: {
+        id: true,
+        studentId: true,
+        month: true,
+        year: true,
+        student_fee: true,
+      },
+      orderBy: [{ studentId: 'asc' }],
+    });
+
+    // Build the plan (what will change)
+    const plan = candidates.map(c => {
+      const before = c.student_fee!;
+      let after: Prisma.Decimal | null = null;
+
+      if (before.equals(new Prisma.Decimal(29))) after = new Prisma.Decimal(27);
+      if (before.equals(new Prisma.Decimal(19))) after = new Prisma.Decimal(17);
+
+      return {
+        id: c.id,
+        studentId: c.studentId,
+        month: c.month,
+        year: c.year,
+        before: before.toString(),
+        after: after ? after.toString() : null,
+      };
+    }).filter(x => x.after !== null);
+
+    if (dryRun) {
+      return res.status(200).json({
+        message: 'DRY RUN: Would adjust fees for Sep-2025',
+        month,
+        year,
+        plannedUpdates: plan.length,
+        items: plan.slice(0, 200), // preview first 200
+      });
+    }
+
+    // Apply updates in a transaction (idempotent if run multiple times)
+    const updates = plan.map(p =>
+      prisma.studentFee.update({
+        where: { id: p.id },
+        data: { student_fee: new Prisma.Decimal(p.after!) },
+      })
+    );
+
+    await prisma.$transaction(updates);
+
+    return res.status(200).json({
+      message: 'Adjusted fees for Sep-2025 (29->27 and 19->17)',
+      month,
+      year,
+      updatedCount: plan.length,
+      sample: plan.slice(0, 50),
+    });
+  } catch (error: any) {
+    console.error('adjustSep2025Fees error:', error);
+    return res.status(500).json({ message: 'Server error', error: String(error?.message || error) });
+  }
+};
+
+
 
